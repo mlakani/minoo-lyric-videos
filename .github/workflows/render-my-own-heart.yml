@@ -1,11 +1,11 @@
-name: AUTO Render My Own Heart FIXED 10S
+name: AUTO Render My Own Heart FIXED AT 33S
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "synchronize_lyrics.py"
+      - "render_fixed_33.py"
       - "MyOwnHeart_Lyrics.txt"
       - ".github/workflows/render-my-own-heart.yml"
 
@@ -37,30 +37,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install whisperx
 
-      - name: Force-align exact lyrics and render video
-        run: python synchronize_lyrics.py
+      - name: Render with verse hard-anchored at 33 seconds
+        run: python render_fixed_33.py
 
-      - name: Create unmistakable fixed filename
+      - name: Publish unmistakable 33-second version
         run: |
           mkdir -p generated
-          cp My_Own_Heart_Synchronized.mp4 generated/My_Own_Heart_FIXED_10_SECONDS.mp4
-          cp my_own_heart_timings.json generated/My_Own_Heart_FIXED_10_SECONDS_timings.json
-
-      - name: Publish finished MP4 directly into repository
-        run: |
+          cp My_Own_Heart_FIXED_AT_33_SECONDS.mp4 generated/My_Own_Heart_FIXED_AT_33_SECONDS.mp4
+          cp my_own_heart_fixed_33_timings.json generated/My_Own_Heart_FIXED_AT_33_SECONDS_timings.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add generated/My_Own_Heart_FIXED_10_SECONDS.mp4 generated/My_Own_Heart_FIXED_10_SECONDS_timings.json
-          git commit -m "Publish My Own Heart fixed 10-second lyric video [skip ci]" || exit 0
+          git add generated/My_Own_Heart_FIXED_AT_33_SECONDS.mp4 generated/My_Own_Heart_FIXED_AT_33_SECONDS_timings.json
+          git commit -m "Publish My Own Heart anchored at 33 seconds [skip ci]" || exit 0
           git push
 
-      - name: Upload finished synchronized video
+      - name: Upload finished video
         uses: actions/upload-artifact@v4
         with:
-          name: My-Own-Heart-FIXED-10-SECONDS
+          name: My-Own-Heart-FIXED-AT-33-SECONDS
           path: |
-            generated/My_Own_Heart_FIXED_10_SECONDS.mp4
-            generated/My_Own_Heart_FIXED_10_SECONDS_timings.json
-            my_own_heart.ass
+            generated/My_Own_Heart_FIXED_AT_33_SECONDS.mp4
+            generated/My_Own_Heart_FIXED_AT_33_SECONDS_timings.json
+            my_own_heart_fixed_33.ass
           if-no-files-found: error
           retention-days: 7
