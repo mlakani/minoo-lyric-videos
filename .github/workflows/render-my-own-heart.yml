@@ -1,10 +1,16 @@
-name: Render My Own Heart Lyric Video
+name: AUTO Render My Own Heart FIXED 10S
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "synchronize_lyrics.py"
+      - "MyOwnHeart_Lyrics.txt"
+      - ".github/workflows/render-my-own-heart.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   render:
@@ -34,13 +40,27 @@ jobs:
       - name: Force-align exact lyrics and render video
         run: python synchronize_lyrics.py
 
+      - name: Create unmistakable fixed filename
+        run: |
+          mkdir -p generated
+          cp My_Own_Heart_Synchronized.mp4 generated/My_Own_Heart_FIXED_10_SECONDS.mp4
+          cp my_own_heart_timings.json generated/My_Own_Heart_FIXED_10_SECONDS_timings.json
+
+      - name: Publish finished MP4 directly into repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add generated/My_Own_Heart_FIXED_10_SECONDS.mp4 generated/My_Own_Heart_FIXED_10_SECONDS_timings.json
+          git commit -m "Publish My Own Heart fixed 10-second lyric video [skip ci]" || exit 0
+          git push
+
       - name: Upload finished synchronized video
         uses: actions/upload-artifact@v4
         with:
-          name: My-Own-Heart-Forced-Aligned-Video
+          name: My-Own-Heart-FIXED-10-SECONDS
           path: |
-            My_Own_Heart_Synchronized.mp4
-            my_own_heart_timings.json
+            generated/My_Own_Heart_FIXED_10_SECONDS.mp4
+            generated/My_Own_Heart_FIXED_10_SECONDS_timings.json
             my_own_heart.ass
           if-no-files-found: error
           retention-days: 7
