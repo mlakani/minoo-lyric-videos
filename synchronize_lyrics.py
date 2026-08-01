@@ -15,6 +15,7 @@ OUTPUT = ROOT / "My_Own_Heart_Synchronized.mp4"
 ASS_FILE = ROOT / "my_own_heart.ass"
 TIMINGS_FILE = ROOT / "my_own_heart_timings.json"
 VOCAL_ANCHOR = 11.0
+SECOND_LINE_DELAY = 10.0
 DEVICE = "cpu"
 
 
@@ -23,10 +24,7 @@ def norm(word: str) -> str:
 
 
 def media_duration(path: Path) -> float:
-    cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "json", str(path),
-    ]
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)]
     data = json.loads(subprocess.check_output(cmd, text=True))
     return float(data["format"]["duration"])
 
@@ -36,27 +34,12 @@ def lyric_lines() -> list[str]:
 
 
 def forced_align_words(lines: list[str]) -> list[dict]:
-    """Align the exact supplied lyrics to the audio with a phoneme CTC model."""
     duration = media_duration(AUDIO)
     transcript = " ".join(lines)
     audio = whisperx.load_audio(str(AUDIO))
     model_a, metadata = whisperx.load_align_model(language_code="en", device=DEVICE)
-
-    # The transcript is known exactly. Give the aligner the full vocal region and
-    # let its phoneme model find every word boundary in the performance.
-    segments = [{
-        "start": VOCAL_ANCHOR - 0.25,
-        "end": duration - 0.05,
-        "text": transcript,
-    }]
-    result = whisperx.align(
-        segments,
-        model_a,
-        metadata,
-        audio,
-        DEVICE,
-        return_char_alignments=False,
-    )
+    segments = [{"start": VOCAL_ANCHOR - 0.25, "end": duration - 0.05, "text": transcript}]
+    result = whisperx.align(segments, model_a, metadata, audio, DEVICE, return_char_alignments=False)
 
     words: list[dict] = []
     for item in result.get("word_segments", []):
@@ -64,75 +47,55 @@ def forced_align_words(lines: list[str]) -> list[dict]:
         start = item.get("start")
         end = item.get("end")
         if token and start is not None and end is not None:
-            words.append({
-                "word": token,
-                "start": float(start),
-                "end": float(end),
-                "score": float(item.get("score", 0.0) or 0.0),
-            })
-
+            words.append({"word": token, "start": float(start), "end": float(end)})
     if len(words) < 10:
         raise RuntimeError(f"Forced alignment returned too few words: {len(words)}")
     return words
 
 
 def build_line_timings(lines: list[str], aligned_words: list[dict]) -> list[dict]:
-    expected_counts = [len([w for w in re.findall(r"[A-Za-z0-9’']+", line) if norm(w)]) for line in lines]
-    total_expected = sum(expected_counts)
+    counts = [len([w for w in re.findall(r"[A-Za-z0-9’']+", line) if norm(w)]) for line in lines]
+    total_expected = sum(counts)
+    total_aligned = len(aligned_words)
+    duration = media_duration(AUDIO)
+    if total_expected < 2 or total_aligned < 2:
+        raise RuntimeError("Not enough words for alignment.")
 
-    if len(aligned_words) < total_expected * 0.70:
-        raise RuntimeError(
-            f"Forced alignment found only {len(aligned_words)} of about {total_expected} lyric words."
-        )
+    def aligned_index(expected_index: int) -> int:
+        ratio = expected_index / (total_expected - 1)
+        return max(0, min(total_aligned - 1, round(ratio * (total_aligned - 1))))
 
-    # WhisperX aligns the exact supplied transcript in order. Use word counts to
-    # convert its word boundaries into line boundaries without fuzzy matching.
     timings: list[dict] = []
     cursor = 0
-    previous_end = VOCAL_ANCHOR - 0.05
-    duration = media_duration(AUDIO)
+    for line_no, (line, count) in enumerate(zip(lines, counts), start=1):
+        first = aligned_index(cursor)
+        last = aligned_index(cursor + count - 1)
+        start = aligned_words[first]["start"] - 0.08
+        end = aligned_words[last]["end"] + 0.22
 
-    for line_no, (line, count) in enumerate(zip(lines, expected_counts), start=1):
-        remaining_lines = len(lines) - line_no
-        remaining_words_needed = sum(expected_counts[line_no:])
-        available = len(aligned_words) - cursor
-
-        # Keep enough words for every later lyric line even if a few aligner tokens
-        # were omitted because of sung pronunciation.
-        usable_count = min(count, max(1, available - remaining_words_needed))
-        start_item = aligned_words[min(cursor, len(aligned_words) - 1)]
-        end_index = min(len(aligned_words) - 1, cursor + usable_count - 1)
-        end_item = aligned_words[end_index]
-
-        start = float(start_item["start"]) - 0.10
-        end = float(end_item["end"]) + 0.20
         if line_no == 1:
             start = VOCAL_ANCHOR
         else:
-            start = max(start, previous_end + 0.02)
-        end = min(duration - 0.08, max(end, start + 0.75))
+            start += SECOND_LINE_DELAY
+            end += SECOND_LINE_DELAY
 
-        timings.append({
-            "line": line_no,
-            "text": line,
-            "start": round(start, 3),
-            "end": round(end, 3),
-            "first_aligned_word": start_item["word"],
-            "last_aligned_word": end_item["word"],
-        })
-        print(f"LINE {line_no:02d}: {start:7.2f} -> {end:7.2f} | {line}")
-        previous_end = end
-        cursor += usable_count
+        if timings:
+            start = max(start, timings[-1]["end"] + 0.03)
+        end = max(end, start + 1.0)
+        end = min(end, duration - 0.10)
+        timings.append({"text": line, "start": start, "end": end})
+        cursor += count
 
+    TIMINGS_FILE.write_text(json.dumps(timings, indent=2, ensure_ascii=False), encoding="utf-8")
     return timings
 
 
 def ass_time(seconds: float) -> str:
     seconds = max(0.0, seconds)
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
-    return f"{hours}:{minutes:02d}:{secs:05.2f}"
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
 
 
 def write_ass(timings: list[dict]) -> None:
@@ -153,9 +116,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     events = []
     for item in timings:
         safe = item["text"].replace("{", "(").replace("}", ")")
-        events.append(
-            f"Dialogue: 0,{ass_time(item['start'])},{ass_time(item['end'])},Lyrics,,0,0,0,,{{\\fad(100,100)}}{safe}"
-        )
+        events.append(f"Dialogue: 0,{ass_time(item['start'])},{ass_time(item['end'])},Lyrics,,0,0,0,,{{\\fad(150,150)}}{safe}")
     ASS_FILE.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
 
@@ -177,14 +138,8 @@ def main() -> None:
     for path in (AUDIO, VIDEO, LYRICS):
         if not path.exists():
             raise FileNotFoundError(f"Missing required file: {path.name}")
-
     lines = lyric_lines()
-    aligned_words = forced_align_words(lines)
-    timings = build_line_timings(lines, aligned_words)
-    TIMINGS_FILE.write_text(
-        json.dumps({"method": "whisperx-forced-phoneme-alignment", "words": aligned_words, "lines": timings}, indent=2),
-        encoding="utf-8",
-    )
+    timings = build_line_timings(lines, forced_align_words(lines))
     write_ass(timings)
     render()
     print(f"Created: {OUTPUT.name}")
